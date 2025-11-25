@@ -1,5 +1,5 @@
 {
-  "openapi": "3.0.0",
+  "openapi": "3.1.1",
   "info": {
     "title": "GA Analytics Connector",
     "description": "GA4 Analytics Connector - Query Google Analytics 4 data through natural language.\n\nThis API allows you to query GA4 data including:\n- Sessions, users, engagement metrics\n- Traffic sources and channels\n- Page views and content performance\n- E-commerce and conversion data\n- Custom dimensions and metrics\n\nAll queries require OAuth2 authentication.",
