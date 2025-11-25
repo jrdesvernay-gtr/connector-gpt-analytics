@@ -2,8 +2,9 @@
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.security import OAuth2PasswordBearer
+from pathlib import Path
 
 from app.config import get_settings
 from app.core.errors import ConnectorError, error_to_http_exception
@@ -67,6 +68,18 @@ async def root():
 async def health():
     """Health check endpoint."""
     return {"status": "healthy"}
+
+
+@app.get("/privacy-policy", response_class=HTMLResponse)
+async def privacy_policy():
+    """Privacy policy page."""
+    template_path = Path(__file__).parent / "templates" / "privacy_policy.html"
+    if template_path.exists():
+        return HTMLResponse(content=template_path.read_text())
+    return HTMLResponse(
+        content="<h1>Privacy Policy</h1><p>Privacy policy page is being updated.</p>",
+        status_code=404
+    )
 
 
 # Import and register routers

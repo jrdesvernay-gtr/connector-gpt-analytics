@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.responses import RedirectResponse, JSONResponse
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 
 from app.database import get_db
 from app.schemas.ga import Property, PropertyList, GAConnectionResponse
@@ -14,14 +14,17 @@ from app.models.user import User
 from app.models.workspace import Workspace
 from app.models.ga_connection import GAConnection
 from app.core.errors import ConnectorError, error_to_http_exception
+import logging
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.get("/ga/connect")
 async def ga_connect(
     workspace_id: str = None,
     token: str = None,  # Allow token as query parameter for browser testing
+    next: Optional[str] = Query(None, alias="next"),  # URL to redirect to after connection
     current_user: User = Depends(get_current_user),
     workspace: Workspace = Depends(get_user_default_workspace),
     db: Session = Depends(get_db),
@@ -32,10 +35,12 @@ async def ga_connect(
     
     Args:
         workspace_id: Optional workspace ID (defaults to user's default workspace)
+        next: Optional URL to redirect to after successful GA connection (URL-encoded)
     """
     print(f"DEBUG: GA connect endpoint called")
     print(f"DEBUG: User ID: {current_user.id}, Email: {current_user.email}")
     print(f"DEBUG: Workspace ID: {workspace.id if workspace else 'None'}")
+    print(f"DEBUG: Next URL: {next}")
     
     try:
         # Use provided workspace_id or default workspace
@@ -52,7 +57,8 @@ async def ga_connect(
         
         print(f"DEBUG: Generating authorization URL for workspace: {workspace.id}")
         authorization_url = GAOAuthService.get_authorization_url(
-            workspace_id=str(workspace.id)
+            workspace_id=str(workspace.id),
+            next_url=next
         )
         print(f"DEBUG: Authorization URL generated successfully")
         
@@ -97,9 +103,9 @@ async def ga_callback(
             detail="Missing authorization code",
         )
     
-    # Parse workspace_id from state
-    workspace_id, _ = GAOAuthService.parse_state(state or "")
-    print(f"DEBUG: Parsed workspace_id from state: {workspace_id}")
+    # Parse workspace_id, csrf_token, and next_url from state
+    workspace_id, csrf_token, next_url = GAOAuthService.parse_state(state or "")
+    print(f"DEBUG: Parsed from state - workspace_id: {workspace_id}, next_url: {next_url}")
     
     if not workspace_id:
         raise HTTPException(
@@ -217,7 +223,16 @@ async def ga_callback(
         settings = get_settings()
         
         access_token = create_access_token(data={"sub": str(user.id)})
-        redirect_url = f"{settings.APP_BASE_URL}/ga/select-property?workspace_id={workspace_id}&token={access_token}"
+        
+        # Build redirect URL with token and next_url if provided
+        select_params = {
+            "workspace_id": workspace_id,
+            "token": access_token,
+        }
+        if next_url:
+            select_params["next"] = next_url
+        
+        redirect_url = f"{settings.APP_BASE_URL}/ga/select-property?{urlencode(select_params)}"
         return RedirectResponse(url=redirect_url)
     else:
         # Single property: auto-select and create connection
@@ -237,11 +252,41 @@ async def ga_callback(
                 detail=str(e),
             )
         
-        # Redirect to success page
+        # Redirect to next_url if provided, otherwise success page
         from app.config import get_settings
+        from urllib.parse import urlencode, urlparse, parse_qs, urlunparse
         settings = get_settings()
-        redirect_url = f"{settings.APP_BASE_URL}/ga/success?workspace_id={workspace_id}&property_id={first_property['property_id']}"
-        return RedirectResponse(url=redirect_url)
+        
+        if next_url:
+            # URL-decode next_url in case it was encoded
+            from urllib.parse import unquote
+            try:
+                next_url_decoded = unquote(next_url)
+            except Exception:
+                next_url_decoded = next_url
+            
+            # Append token to next_url
+            parsed = urlparse(next_url_decoded)
+            query_params = parse_qs(parsed.query)
+            access_token = create_access_token(data={"sub": str(user.id)})
+            query_params['token'] = [access_token]
+            new_query = urlencode(query_params, doseq=True)
+            redirect_url = urlunparse((
+                parsed.scheme,
+                parsed.netloc,
+                parsed.path,
+                parsed.params,
+                new_query,
+                parsed.fragment
+            ))
+            logger.info(f"GA connection completed (single property), redirecting to next URL: {redirect_url[:100]}...")
+        else:
+            # Default: redirect to success page
+            access_token = create_access_token(data={"sub": str(user.id)})
+            redirect_url = f"{settings.APP_BASE_URL}/ga/success?workspace_id={workspace_id}&property_id={first_property['property_id']}&token={access_token}"
+            logger.debug(f"GA connection completed (single property), redirecting to success page")
+        
+        return RedirectResponse(url=redirect_url, status_code=302)
 
 
 @router.get("/ga/properties", response_model=PropertyList)
@@ -308,6 +353,7 @@ async def select_property(
     property_id: str,
     workspace_id: str = None,
     token: str = None,  # Allow token as query parameter for browser testing
+    next: Optional[str] = Query(None, alias="next"),  # URL to redirect to after selection
     current_user: User = Depends(get_current_user),
     workspace: Workspace = Depends(get_user_default_workspace),
     db: Session = Depends(get_db),
@@ -367,14 +413,48 @@ async def select_property(
         db.commit()
         db.refresh(connection)
     
-    # For GET requests (browser clicks), redirect back to selection page
+    # For GET requests (browser clicks), redirect appropriately
     from app.config import get_settings
     settings = get_settings()
     
-    # Check request method - if GET, redirect back to selection page
     if request.method == 'GET':
-        redirect_url = f"{settings.APP_BASE_URL}/ga/select-property?workspace_id={workspace.id}{f'&token={token}' if token else ''}"
-        return RedirectResponse(url=redirect_url)
+        # If next URL is provided, redirect there with token
+        if next:
+            from urllib.parse import urlencode, urlparse, parse_qs, urlunparse, unquote
+            from app.core.security import create_access_token
+            
+            # URL-decode next URL in case it was encoded
+            try:
+                next_url = unquote(next)
+            except Exception:
+                next_url = next
+            
+            # Create fresh token
+            access_token = create_access_token(data={"sub": str(current_user.id)})
+            
+            # Append token to next_url
+            parsed = urlparse(next_url)
+            query_params = parse_qs(parsed.query)
+            query_params['token'] = [access_token]
+            new_query = urlencode(query_params, doseq=True)
+            redirect_url = urlunparse((
+                parsed.scheme,
+                parsed.netloc,
+                parsed.path,
+                parsed.params,
+                new_query,
+                parsed.fragment
+            ))
+            logger.info(f"Property selected, redirecting to next URL: {redirect_url[:100]}...")
+            return RedirectResponse(url=redirect_url, status_code=302)
+        else:
+            # No next URL - redirect back to selection page
+            from urllib.parse import urlencode
+            redirect_params = {"workspace_id": workspace.id}
+            if token:
+                redirect_params["token"] = token
+            redirect_url = f"{settings.APP_BASE_URL}/ga/select-property?{urlencode(redirect_params)}"
+            return RedirectResponse(url=redirect_url)
     
     # For POST requests (API), return JSON
     return GAConnectionResponse.model_validate(connection)
@@ -413,12 +493,16 @@ async def list_connections(
 async def select_property_page(
     workspace_id: str,
     token: str = None,  # Allow token as query parameter for browser testing
+    next: Optional[str] = Query(None, alias="next"),  # URL to redirect to after property selection
     current_user: User = Depends(get_current_user),
     workspace: Workspace = Depends(get_user_default_workspace),
     db: Session = Depends(get_db),
 ):
     """
     Property selection page - shows all available GA4 properties for user to choose.
+    
+    Args:
+        next: Optional URL to redirect to after property selection (URL-encoded)
     """
     # Use provided workspace_id or default workspace
     if workspace_id:
@@ -461,7 +545,12 @@ async def select_property_page(
     properties_html = ""
     for prop in properties_data:
         is_selected = "✓ SELECTED" if prop["property_id"] == connection.property_id else "Select"
-        select_url = f"{settings.APP_BASE_URL}/ga/properties/{prop['property_id']}/select?token={token or ''}"
+        # Build select URL with next parameter if provided
+        from urllib.parse import urlencode
+        select_params = {"token": token or ""}
+        if next:
+            select_params["next"] = next
+        select_url = f"{settings.APP_BASE_URL}/ga/properties/{prop['property_id']}/select?{urlencode(select_params)}"
         
         properties_html += f"""
         <div style="padding: 15px; margin: 10px 0; border: 1px solid #ddd; border-radius: 5px;">
@@ -492,7 +581,7 @@ async def select_property_page(
         </div>
         {properties_html}
         <p style="margin-top: 30px;">
-            <a href="{settings.APP_BASE_URL}/ga/success?workspace_id={workspace.id}&property_id={connection.property_id}{f'&token={token}' if token else ''}" style="color: #007bff;">Continue with current selection →</a>
+            {f'<a href="{settings.APP_BASE_URL}/ga/properties/{connection.property_id}/select?token={token or ""}&next={next or ""}" style="color: #007bff; font-weight: bold;">Continue with current selection →</a>' if next else f'<a href="{settings.APP_BASE_URL}/ga/success?workspace_id={workspace.id}&property_id={connection.property_id}{f"&token={token}" if token else ""}" style="color: #007bff;">Continue with current selection →</a>'}
         </p>
     </body>
     </html>

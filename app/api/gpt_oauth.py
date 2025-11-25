@@ -4,7 +4,7 @@ import logging
 from typing import Optional
 from urllib.parse import urlencode, urlparse, parse_qs, urlunparse
 from fastapi import APIRouter, Depends, HTTPException, Request, status, Query, Form
-from fastapi.responses import RedirectResponse, JSONResponse
+from fastapi.responses import RedirectResponse, JSONResponse, Response
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -12,8 +12,10 @@ from app.api.dependencies import get_current_user
 from app.models.user import User
 from app.models.workspace import Workspace
 from app.services.gpt_oauth_service import GPTOAuthService
+from app.config import get_settings
 
 logger = logging.getLogger(__name__)
+settings = get_settings()
 
 router = APIRouter()
 
@@ -42,49 +44,133 @@ async def authorize_gpt_callback(
 
 @router.get("/authorize-gpt")
 async def authorize_gpt(
-    workspace_id: str = Query(..., description="Workspace ID"),
     redirect_uri: str = Query(..., description="OAuth redirect URI from Custom GPT"),
     state: Optional[str] = Query(None, description="State parameter for CSRF protection"),
+    workspace_id: Optional[str] = Query(None, description="Workspace ID (optional, will use default if not provided)"),
     client_id: Optional[str] = Query(None, description="OAuth client ID"),
     scope: Optional[str] = Query("read", description="Requested scope"),
-    user: User = Depends(get_current_user),
+    token: Optional[str] = Query(None, description="JWT token (for authenticated requests)"),
+    request: Request,
     db: Session = Depends(get_db),
 ):
     """
     OAuth2 authorization endpoint for Custom GPT.
     
-    This endpoint initiates the OAuth flow. The user must be authenticated,
-    and we verify they own the workspace before generating an authorization code.
+    This endpoint initiates the OAuth flow. If user is not authenticated,
+    redirects to login, then continues flow after authentication.
+    
+    Flow:
+    1. Check if user is authenticated
+    2. If not → redirect to login with return URL
+    3. After login → check if GA is connected
+    4. If not → redirect to GA connection
+    5. After GA connection → return here to show authorization page
+    6. User authorizes → generate code and redirect to ChatGPT
     
     Args:
-        workspace_id: Workspace ID to authorize
         redirect_uri: Where to redirect after authorization (from Custom GPT)
         state: Optional state parameter for CSRF protection
+        workspace_id: Optional workspace ID (uses default if not provided)
         client_id: Optional OAuth client ID
         scope: Requested scope (default: "read")
-        user: Authenticated user (from dependency)
+        token: Optional JWT token for authentication
+        request: FastAPI Request object
         db: Database session
         
     Returns:
-        Redirect to redirect_uri with authorization code
+        Either redirect to login, GA connection, authorization page, or ChatGPT callback
     """
-    logger.debug(f"GPT authorization requested for workspace: {workspace_id}")
-
-    # Verify workspace exists and belongs to user
-    workspace = (
-        db.query(Workspace)
-        .filter(
-            Workspace.id == workspace_id,
-            Workspace.user_id == user.id,
+    from app.api.dependencies import get_current_user_optional
+    from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+    from urllib.parse import urlencode
+    
+    logger.debug(f"GPT authorization requested: redirect_uri={redirect_uri}, workspace_id={workspace_id}, state={state}")
+    
+    # Try to get current user (optional - don't fail if not authenticated)
+    # Check both token query parameter and Authorization header
+    user = None
+    
+    # First, try token from query parameter
+    if token:
+        try:
+            from app.core.security import verify_token
+            payload = verify_token(token)
+            if payload:
+                user_id = payload.get("sub")
+                if user_id:
+                    user = db.query(User).filter(User.id == user_id).first()
+        except Exception as e:
+            logger.debug(f"Failed to verify token from query param: {e}")
+            pass
+    
+    # If not found, try Authorization header
+    if not user:
+        try:
+            credentials: Optional[HTTPAuthorizationCredentials] = None
+            security = HTTPBearer(auto_error=False)
+            # Get credentials from request header
+            auth_header = request.headers.get("Authorization")
+            if auth_header and auth_header.startswith("Bearer "):
+                token_value = auth_header.replace("Bearer ", "")
+                from app.core.security import verify_token
+                payload = verify_token(token_value)
+                if payload:
+                    user_id = payload.get("sub")
+                    if user_id:
+                        user = db.query(User).filter(User.id == user_id).first()
+        except Exception as e:
+            logger.debug(f"Failed to verify token from Authorization header: {e}")
+            pass
+    
+    # If not authenticated, redirect to login with return URL
+    if not user:
+        # Build return URL to come back to authorize-gpt after login
+        return_params = {
+            "redirect_uri": redirect_uri,
+        }
+        if state:
+            return_params["state"] = state
+        if workspace_id:
+            return_params["workspace_id"] = workspace_id
+            
+        next_url = f"{settings.APP_BASE_URL}/authorize-gpt?{urlencode(return_params)}"
+        
+        # URL-encode the next_url properly for passing as query parameter
+        from urllib.parse import quote
+        login_url = f"{settings.APP_BASE_URL}/auth/google/login?next={quote(next_url)}"
+        
+        logger.debug(f"User not authenticated, redirecting to login: {login_url}")
+        return RedirectResponse(url=login_url, status_code=302)
+    
+    # User is authenticated - get or determine workspace
+    if workspace_id:
+        # Use provided workspace_id
+        workspace = (
+            db.query(Workspace)
+            .filter(
+                Workspace.id == workspace_id,
+                Workspace.user_id == user.id,
+            )
+            .first()
         )
-        .first()
-    )
-
-    if not workspace:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Workspace not found or access denied",
+        if not workspace:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Workspace not found or access denied",
+            )
+    else:
+        # Use user's default workspace
+        workspace = (
+            db.query(Workspace)
+            .filter(Workspace.user_id == user.id)
+            .first()
         )
+        if not workspace:
+            # Create default workspace if none exists
+            workspace = Workspace(user_id=user.id, name="My Workspace")
+            db.add(workspace)
+            db.commit()
+            db.refresh(workspace)
 
     # Check if workspace has a GA connection
     from app.models.ga_connection import GAConnection
@@ -96,12 +182,150 @@ async def authorize_gpt(
     )
 
     if not ga_connection:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Workspace has no GA connection. Please connect Google Analytics first.",
-        )
+        # No GA connection - redirect to GA connection flow
+        # Store OAuth flow state to return here after GA connection
+        from app.config import get_settings
+        settings = get_settings()
+        
+        # Build return URL to come back to authorize-gpt after GA connection
+        return_params = {
+            "redirect_uri": redirect_uri,
+        }
+        if state:
+            return_params["state"] = state
+        return_params["workspace_id"] = str(workspace.id)
+        
+        next_url = f"{settings.APP_BASE_URL}/authorize-gpt?{urlencode(return_params)}"
+        
+        # URL-encode the next_url properly for passing as query parameter
+        from urllib.parse import quote
+        ga_connect_url = f"{settings.APP_BASE_URL}/ga/connect?token={token}&next={quote(next_url)}"
+        
+        logger.debug(f"No GA connection found, redirecting to GA connection: {ga_connect_url}")
+        return RedirectResponse(url=ga_connect_url, status_code=302)
 
-    # Generate authorization code
+    # Build current query params for redirect
+    current_params = {}
+    if request:
+        for key, value in request.query_params.items():
+            # FastAPI query params are MultiDict, get first value
+            if isinstance(value, list):
+                current_params[key] = value[0]
+            else:
+                current_params[key] = value
+    
+    # Check if this is an authorization confirmation request
+    # If user clicked "Authorize" button, auto_authorize parameter will be present
+    auto_authorize = current_params.get("auto_authorize") if current_params else None
+    
+    # If not auto-authorizing, show authorization confirmation page
+    if auto_authorize != "true":
+        # Show authorization page HTML
+        authorization_page_html = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Authorize ChatGPT</title>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <style>
+                body {{
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+                    display: flex;
+                    justify-content: center;
+                    align-items: center;
+                    min-height: 100vh;
+                    margin: 0;
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                }}
+                .container {{
+                    background: white;
+                    border-radius: 12px;
+                    padding: 40px;
+                    box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+                    max-width: 500px;
+                    width: 90%;
+                }}
+                h1 {{
+                    margin: 0 0 10px 0;
+                    color: #333;
+                }}
+                .subtitle {{
+                    color: #666;
+                    margin-bottom: 30px;
+                }}
+                .info-box {{
+                    background: #f5f7fa;
+                    border-left: 4px solid #667eea;
+                    padding: 15px;
+                    margin: 20px 0;
+                    border-radius: 4px;
+                }}
+                .info-box strong {{
+                    color: #333;
+                }}
+                .authorize-btn {{
+                    background: #667eea;
+                    color: white;
+                    border: none;
+                    padding: 15px 30px;
+                    font-size: 16px;
+                    border-radius: 6px;
+                    cursor: pointer;
+                    width: 100%;
+                    margin-top: 20px;
+                    font-weight: 600;
+                    transition: background 0.3s;
+                }}
+                .authorize-btn:hover {{
+                    background: #5568d3;
+                }}
+                .cancel-btn {{
+                    background: transparent;
+                    color: #666;
+                    border: 1px solid #ddd;
+                    padding: 15px 30px;
+                    font-size: 16px;
+                    border-radius: 6px;
+                    cursor: pointer;
+                    width: 100%;
+                    margin-top: 10px;
+                }}
+                .cancel-btn:hover {{
+                    background: #f5f7fa;
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h1>Authorize ChatGPT</h1>
+                <p class="subtitle">Allow ChatGPT to access your Google Analytics data</p>
+                
+                <div class="info-box">
+                    <strong>Workspace:</strong> {workspace.name}<br>
+                    <strong>GA Property:</strong> {ga_connection.property_name}
+                </div>
+                
+                <p>ChatGPT will be able to:</p>
+                <ul>
+                    <li>Query your GA4 analytics data</li>
+                    <li>Read metrics and dimensions</li>
+                    <li>Access data for this workspace only</li>
+                </ul>
+                
+                <p><small>You can revoke access at any time.</small></p>
+                
+                <a href="{settings.APP_BASE_URL}/authorize-gpt?{urlencode({**current_params, 'auto_authorize': 'true'})}" 
+                   class="authorize-btn" style="text-decoration: none; display: block; text-align: center;">
+                    Authorize ChatGPT
+                </a>
+            </div>
+        </body>
+        </html>
+        """
+        return Response(content=authorization_page_html, media_type="text/html")
+
+    # User authorized - generate authorization code and redirect
     authorization_code = GPTOAuthService.create_authorization_code(
         str(workspace.id)
     )
@@ -111,7 +335,6 @@ async def authorize_gpt(
     )
 
     # Build redirect URL with authorization code using proper URL encoding
-    # Parse the redirect_uri to ensure we don't break existing query params
     parsed_uri = urlparse(redirect_uri)
     query_params = parse_qs(parsed_uri.query)
     
@@ -132,7 +355,7 @@ async def authorize_gpt(
     ))
 
     logger.info(
-        f"Generated authorization code for workspace {workspace.id}"
+        f"Generated authorization code for workspace {workspace.id}, redirecting to ChatGPT"
     )
     logger.debug(f"Redirect URL: {redirect_url}")
     logger.debug(f"Authorization code (first 20 chars): {authorization_code[:20]}...")

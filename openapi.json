@@ -1,0 +1,266 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "GA Analytics Connector",
+    "description": "GA4 Analytics Connector - Query Google Analytics 4 data through natural language.\n\nThis API allows you to query GA4 data including:\n- Sessions, users, engagement metrics\n- Traffic sources and channels\n- Page views and content performance\n- E-commerce and conversion data\n- Custom dimensions and metrics\n\nAll queries require OAuth2 authentication.",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "https://ga.connector.get-to-rev.com",
+      "description": "Production server"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "oauth2": {
+        "type": "oauth2",
+        "flows": {
+          "authorizationCode": {
+            "authorizationUrl": "https://ga.connector.get-to-rev.com/authorize-gpt",
+            "tokenUrl": "https://ga.connector.get-to-rev.com/oauth/token",
+            "scopes": {
+              "read": "Read access to GA4 analytics data"
+            }
+          }
+        },
+        "description": "OAuth2 authentication. Users must authorize the connector through the web interface first."
+      }
+    },
+    "schemas": {
+      "GAReportRequest": {
+        "type": "object",
+        "required": ["metrics", "date_ranges"],
+        "properties": {
+          "metrics": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "List of GA4 metrics to retrieve. Common metrics: sessions, totalUsers, activeUsers, screenPageViews, eventCount, conversions, totalRevenue, engagementRate",
+            "example": ["sessions", "totalUsers"]
+          },
+          "dimensions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Optional list of GA4 dimensions to group by. Common dimensions: date, country, city, deviceCategory, sessionDefaultChannelGroup, pageTitle, landingPage",
+            "example": ["date"]
+          },
+          "date_ranges": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["startDate", "endDate"],
+              "properties": {
+                "startDate": {
+                  "type": "string",
+                  "format": "date",
+                  "description": "Start date in YYYY-MM-DD format",
+                  "example": "2024-11-01"
+                },
+                "endDate": {
+                  "type": "string",
+                  "format": "date",
+                  "description": "End date in YYYY-MM-DD format",
+                  "example": "2024-11-30"
+                }
+              }
+            },
+            "description": "Date ranges for the query. Format: YYYY-MM-DD",
+            "example": [
+              {
+                "startDate": "2024-11-01",
+                "endDate": "2024-11-30"
+              }
+            ]
+          },
+          "property_id": {
+            "type": "string",
+            "description": "Optional GA4 property ID. If not provided, uses the user's default connected property.",
+            "example": "385792516"
+          }
+        }
+      },
+      "GAReportResponse": {
+        "type": "object",
+        "properties": {
+          "rows": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            },
+            "description": "Array of data rows, each row containing metric and dimension values"
+          },
+          "totals": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Aggregated totals for all metrics",
+            "nullable": true
+          },
+          "row_count": {
+            "type": "integer",
+            "description": "Number of rows returned"
+          }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "detail": {
+            "type": "string",
+            "description": "Error message"
+          }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/ga/run-report": {
+      "post": {
+        "operationId": "runGAReport",
+        "summary": "Query Google Analytics 4 Data",
+        "description": "Query GA4 data. Common metrics: sessions, totalUsers, screenPageViews, conversions. Dimensions: date, country, deviceCategory, pageTitle. Date format: YYYY-MM-DD.",
+        "security": [
+          {
+            "oauth2": ["read"]
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GAReportRequest"
+              },
+              "examples": {
+                "daily_sessions": {
+                  "summary": "Daily sessions for last 30 days",
+                  "value": {
+                    "metrics": ["sessions", "totalUsers"],
+                    "dimensions": ["date"],
+                    "date_ranges": [
+                      {
+                        "startDate": "2024-11-01",
+                        "endDate": "2024-11-30"
+                      }
+                    ]
+                  }
+                },
+                "users_by_country": {
+                  "summary": "Users by country",
+                  "value": {
+                    "metrics": ["totalUsers"],
+                    "dimensions": ["country"],
+                    "date_ranges": [
+                      {
+                        "startDate": "2024-11-01",
+                        "endDate": "2024-11-30"
+                      }
+                    ]
+                  }
+                },
+                "pages_by_views": {
+                  "summary": "Top pages by page views",
+                  "value": {
+                    "metrics": ["screenPageViews"],
+                    "dimensions": ["pageTitle"],
+                    "date_ranges": [
+                      {
+                        "startDate": "2024-11-01",
+                        "endDate": "2024-11-30"
+                      }
+                    ]
+                  }
+                },
+                "traffic_channels": {
+                  "summary": "Sessions by traffic channel",
+                  "value": {
+                    "metrics": ["sessions"],
+                    "dimensions": ["sessionDefaultChannelGroup"],
+                    "date_ranges": [
+                      {
+                        "startDate": "2024-11-01",
+                        "endDate": "2024-11-30"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response with GA4 data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GAReportResponse"
+                },
+                "example": {
+                  "rows": [
+                    {
+                      "date": "20241101",
+                      "sessions": 732,
+                      "totalUsers": 713
+                    },
+                    {
+                      "date": "20241102",
+                      "sessions": 730,
+                      "totalUsers": 703
+                    }
+                  ],
+                  "totals": {
+                    "sessions": 22632,
+                    "totalUsers": 21034
+                  },
+                  "row_count": 30
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Invalid or expired OAuth token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "detail": "Invalid or expired GPT token"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found - No GA connection or property not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "detail": "No GA connection found for this workspace. Please connect Google Analytics first."
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+

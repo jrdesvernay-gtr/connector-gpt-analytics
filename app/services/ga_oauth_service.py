@@ -17,13 +17,14 @@ class GAOAuthService:
     """Service for Google Analytics OAuth connection."""
     
     @staticmethod
-    def get_authorization_url(workspace_id: str, state: Optional[str] = None) -> str:
+    def get_authorization_url(workspace_id: str, state: Optional[str] = None, next_url: Optional[str] = None) -> str:
         """
         Generate Google Analytics OAuth authorization URL.
         
         Args:
             workspace_id: Workspace ID to associate with this connection
             state: Optional state parameter (will include workspace_id if not provided)
+            next_url: Optional URL to redirect to after successful connection
             
         Returns:
             Authorization URL
@@ -38,12 +39,24 @@ class GAOAuthService:
             "https://www.googleapis.com/auth/userinfo.email",  # Minimal scope to identify the GA account
         ]
         
-        # Include workspace_id in state for callback
-        if state is None:
-            import secrets
-            state = f"{workspace_id}:{secrets.token_urlsafe(16)}"
+        # Build state: workspace_id:csrf_token:next_url (base64 encoded if next_url exists)
+        import secrets
+        csrf_token = secrets.token_urlsafe(16) if state is None else state.split(':')[1] if ':' in state else state
+        
+        # If next_url provided, encode it in state using base64 JSON
+        if next_url:
+            import json
+            import base64
+            state_data = {
+                "workspace_id": workspace_id,
+                "csrf": csrf_token,
+                "next": next_url
+            }
+            state_json = json.dumps(state_data)
+            state = base64.urlsafe_b64encode(state_json.encode()).decode()
         else:
-            state = f"{workspace_id}:{state}"
+            # Simple format: workspace_id:csrf_token
+            state = f"{workspace_id}:{csrf_token}"
         
         # Use GA-specific redirect URI (different from user auth)
         ga_redirect_uri = f"{settings.APP_BASE_URL}/ga/callback"
@@ -247,18 +260,39 @@ class GAOAuthService:
             return None
     
     @staticmethod
-    def parse_state(state: str) -> Tuple[Optional[str], Optional[str]]:
+    def parse_state(state: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
         """
-        Parse state parameter to extract workspace_id and additional state.
+        Parse state parameter to extract workspace_id, CSRF token, and next URL.
         
         Args:
-            state: State string in format "workspace_id:additional_state"
+            state: State parameter from OAuth callback
             
         Returns:
-            Tuple of (workspace_id, additional_state)
+            Tuple of (workspace_id, csrf_token, next_url)
         """
+        if not state:
+            return None, None, None
+        
+        # Try base64 JSON format first (if next_url was included)
+        try:
+            import base64
+            import json
+            state_json = base64.urlsafe_b64decode(state.encode()).decode()
+            state_data = json.loads(state_json)
+            workspace_id = state_data.get("workspace_id")
+            csrf_token = state_data.get("csrf")
+            next_url = state_data.get("next")
+            return workspace_id, csrf_token, next_url
+        except (ValueError, json.JSONDecodeError, Exception):
+            # Fallback to simple format: workspace_id:csrf_token
+            pass
+        
+        # Simple format: workspace_id:csrf_token
         if ":" in state:
-            workspace_id, additional_state = state.split(":", 1)
-            return workspace_id, additional_state
-        return state, None
+            parts = state.split(":", 1)
+            workspace_id = parts[0]
+            csrf_token = parts[1] if len(parts) > 1 else None
+            return workspace_id, csrf_token, None
+        # If no colon, treat entire string as workspace_id
+        return state, None, None
 
