@@ -84,6 +84,9 @@ async def authorize_gpt(
     from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
     from urllib.parse import urlencode
     
+    # Get settings at function level to avoid scoping issues
+    app_settings = get_settings()
+    
     logger.debug(f"GPT authorization requested: redirect_uri={redirect_uri}, workspace_id={workspace_id}, state={state}")
     
     # Try to get current user (optional - don't fail if not authenticated)
@@ -136,6 +139,8 @@ async def authorize_gpt(
     
     # If not authenticated, redirect to login with return URL
     if not user:
+        # Get settings at function level to avoid scoping issues
+        app_settings = get_settings()
         try:
             # Build return URL to come back to authorize-gpt after login
             return_params = {
@@ -150,11 +155,11 @@ async def authorize_gpt(
             if scope:
                 return_params["scope"] = scope
                 
-            next_url = f"{settings.APP_BASE_URL}/authorize-gpt?{urlencode(return_params)}"
+            next_url = f"{app_settings.APP_BASE_URL}/authorize-gpt?{urlencode(return_params)}"
             
             # URL-encode the next_url properly for passing as query parameter
             from urllib.parse import quote
-            login_url = f"{settings.APP_BASE_URL}/auth/google/login?next={quote(next_url)}"
+            login_url = f"{app_settings.APP_BASE_URL}/auth/google/login?next={quote(next_url)}"
             
             logger.info(f"User not authenticated, redirecting to login: {login_url}")
             logger.info(f"Next URL: {next_url}")
@@ -208,8 +213,6 @@ async def authorize_gpt(
     if not ga_connection:
         # No GA connection - redirect to GA connection flow
         # Store OAuth flow state to return here after GA connection
-        from app.config import get_settings
-        settings = get_settings()
         
         # Build return URL to come back to authorize-gpt after GA connection
         return_params = {
@@ -219,11 +222,11 @@ async def authorize_gpt(
             return_params["state"] = state
         return_params["workspace_id"] = str(workspace.id)
         
-        next_url = f"{settings.APP_BASE_URL}/authorize-gpt?{urlencode(return_params)}"
+        next_url = f"{app_settings.APP_BASE_URL}/authorize-gpt?{urlencode(return_params)}"
         
         # URL-encode the next_url properly for passing as query parameter
         from urllib.parse import quote
-        ga_connect_url = f"{settings.APP_BASE_URL}/ga/connect?token={token}&next={quote(next_url)}"
+        ga_connect_url = f"{app_settings.APP_BASE_URL}/ga/connect?token={token}&next={quote(next_url)}"
         
         logger.debug(f"No GA connection found, redirecting to GA connection: {ga_connect_url}")
         return RedirectResponse(url=ga_connect_url, status_code=302)
@@ -339,7 +342,7 @@ async def authorize_gpt(
                 
                 <p><small>You can revoke access at any time.</small></p>
                 
-                <a href="{settings.APP_BASE_URL}/authorize-gpt?{urlencode({**current_params, 'auto_authorize': 'true'})}" 
+                <a href="{app_settings.APP_BASE_URL}/authorize-gpt?{urlencode({**current_params, 'auto_authorize': 'true'})}" 
                    class="authorize-btn" style="text-decoration: none; display: block; text-align: center;">
                     Authorize ChatGPT
                 </a>

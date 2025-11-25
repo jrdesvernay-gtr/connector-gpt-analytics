@@ -116,3 +116,4 @@ After uploading the OpenAPI spec, verify:
 3. The system prompt tells the GPT HOW to use the API
 4. The OpenAPI spec tells the GPT WHAT APIs are available
 
+
