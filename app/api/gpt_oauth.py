@@ -132,6 +132,10 @@ async def authorize_gpt(
             return_params["state"] = state
         if workspace_id:
             return_params["workspace_id"] = workspace_id
+        if client_id:
+            return_params["client_id"] = client_id
+        if scope:
+            return_params["scope"] = scope
             
         next_url = f"{settings.APP_BASE_URL}/authorize-gpt?{urlencode(return_params)}"
         
@@ -139,7 +143,8 @@ async def authorize_gpt(
         from urllib.parse import quote
         login_url = f"{settings.APP_BASE_URL}/auth/google/login?next={quote(next_url)}"
         
-        logger.debug(f"User not authenticated, redirecting to login: {login_url}")
+        logger.info(f"User not authenticated, redirecting to login: {login_url}")
+        logger.info(f"Next URL: {next_url}")
         return RedirectResponse(url=login_url, status_code=302)
     
     # User is authenticated - get or determine workspace
