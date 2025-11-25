@@ -94,11 +94,17 @@ async def authorize_gpt(
     if token:
         try:
             from app.core.security import verify_token
+            import uuid
             payload = verify_token(token)
             if payload:
                 user_id = payload.get("sub")
                 if user_id:
-                    user = db.query(User).filter(User.id == user_id).first()
+                    # Convert string UUID to UUID object if needed
+                    try:
+                        user_id_uuid = uuid.UUID(user_id) if isinstance(user_id, str) else user_id
+                        user = db.query(User).filter(User.id == user_id_uuid).first()
+                    except (ValueError, TypeError) as e:
+                        logger.debug(f"Invalid user ID format: {e}")
         except Exception as e:
             logger.debug(f"Failed to verify token from query param: {e}")
             pass
@@ -113,39 +119,52 @@ async def authorize_gpt(
             if auth_header and auth_header.startswith("Bearer "):
                 token_value = auth_header.replace("Bearer ", "")
                 from app.core.security import verify_token
+                import uuid
                 payload = verify_token(token_value)
                 if payload:
                     user_id = payload.get("sub")
                     if user_id:
-                        user = db.query(User).filter(User.id == user_id).first()
+                        # Convert string UUID to UUID object if needed
+                        try:
+                            user_id_uuid = uuid.UUID(user_id) if isinstance(user_id, str) else user_id
+                            user = db.query(User).filter(User.id == user_id_uuid).first()
+                        except (ValueError, TypeError) as e:
+                            logger.debug(f"Invalid user ID format: {e}")
         except Exception as e:
             logger.debug(f"Failed to verify token from Authorization header: {e}")
             pass
     
     # If not authenticated, redirect to login with return URL
     if not user:
-        # Build return URL to come back to authorize-gpt after login
-        return_params = {
-            "redirect_uri": redirect_uri,
-        }
-        if state:
-            return_params["state"] = state
-        if workspace_id:
-            return_params["workspace_id"] = workspace_id
-        if client_id:
-            return_params["client_id"] = client_id
-        if scope:
-            return_params["scope"] = scope
+        try:
+            # Build return URL to come back to authorize-gpt after login
+            return_params = {
+                "redirect_uri": redirect_uri,
+            }
+            if state:
+                return_params["state"] = state
+            if workspace_id:
+                return_params["workspace_id"] = workspace_id
+            if client_id:
+                return_params["client_id"] = client_id
+            if scope:
+                return_params["scope"] = scope
+                
+            next_url = f"{settings.APP_BASE_URL}/authorize-gpt?{urlencode(return_params)}"
             
-        next_url = f"{settings.APP_BASE_URL}/authorize-gpt?{urlencode(return_params)}"
-        
-        # URL-encode the next_url properly for passing as query parameter
-        from urllib.parse import quote
-        login_url = f"{settings.APP_BASE_URL}/auth/google/login?next={quote(next_url)}"
-        
-        logger.info(f"User not authenticated, redirecting to login: {login_url}")
-        logger.info(f"Next URL: {next_url}")
-        return RedirectResponse(url=login_url, status_code=302)
+            # URL-encode the next_url properly for passing as query parameter
+            from urllib.parse import quote
+            login_url = f"{settings.APP_BASE_URL}/auth/google/login?next={quote(next_url)}"
+            
+            logger.info(f"User not authenticated, redirecting to login: {login_url}")
+            logger.info(f"Next URL: {next_url}")
+            return RedirectResponse(url=login_url, status_code=302)
+        except Exception as e:
+            logger.error(f"Error building redirect URL: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error initiating OAuth flow: {str(e)}"
+            )
     
     # User is authenticated - get or determine workspace
     if workspace_id:
