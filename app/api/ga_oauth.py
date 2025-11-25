@@ -10,6 +10,7 @@ from app.database import get_db
 from app.schemas.ga import Property, PropertyList, GAConnectionResponse
 from app.services.ga_oauth_service import GAOAuthService
 from app.services.ga_service import GAService
+from app.services.encryption import get_encryption_service
 from app.api.dependencies import get_current_user, get_user_default_workspace
 from app.models.user import User
 from app.models.workspace import Workspace
@@ -199,25 +200,48 @@ async def ga_callback(
     
     # If multiple properties, let user choose. Otherwise, auto-select the single property
     if len(properties) > 1:
-        # Multiple properties: Create a temporary connection with first property to store credentials,
-        # then redirect to property selection page
-        first_property = properties[0]
-        try:
-            connection = GAOAuthService.create_or_update_connection(
-                db=db,
-                workspace_id=workspace_id,
-                google_account_email=google_account_email,
-                property_id=first_property["property_id"],
-                property_name=first_property["property_name"],
-                credentials=credentials,
-            )
-        except ValueError as e:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=str(e),
-            )
+        # Multiple properties: ALWAYS show selection page
+        # Check if a connection already exists - if so, update credentials but keep existing property
+        # If no connection exists, create one with first property temporarily
+        existing_connection = db.query(GAConnection).filter(
+            GAConnection.workspace_id == workspace_id
+        ).first()
         
-        # Redirect to property selection page
+        if existing_connection:
+            # Update existing connection's credentials without changing property
+            # This preserves the user's previous property selection
+            encryption_service = get_encryption_service()
+            if not credentials.refresh_token:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="No refresh token available in credentials"
+                )
+            
+            encrypted_refresh_token = encryption_service.encrypt(credentials.refresh_token)
+            existing_connection.google_account_email = google_account_email
+            existing_connection.refresh_token_encrypted = encrypted_refresh_token
+            db.commit()
+            db.refresh(existing_connection)
+            connection = existing_connection
+        else:
+            # No existing connection - create temporary one with first property
+            first_property = properties[0]
+            try:
+                connection = GAOAuthService.create_or_update_connection(
+                    db=db,
+                    workspace_id=workspace_id,
+                    google_account_email=google_account_email,
+                    property_id=first_property["property_id"],
+                    property_name=first_property["property_name"],
+                    credentials=credentials,
+                )
+            except ValueError as e:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=str(e),
+                )
+        
+        # Redirect to property selection page - ALWAYS show it so user can choose/change property
         # Generate a token for the user so they can access the selection page
         from app.core.security import create_access_token
         from app.config import get_settings
