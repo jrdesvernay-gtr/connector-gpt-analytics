@@ -78,8 +78,8 @@
           },
           "property_id": {
             "type": "string",
-            "description": "Optional GA4 property ID. If not provided, uses the user's default connected property.",
-            "example": "385792516"
+            "description": "DEPRECATED - Do not use this field. The property ID is automatically determined from the user's connected GA4 account. This field is ignored if provided.",
+            "example": null
           }
         }
       },
@@ -122,7 +122,7 @@
       "post": {
         "operationId": "runGAReport",
         "summary": "Query Google Analytics 4 Data",
-        "description": "Query GA4 data. Common metrics: sessions, totalUsers, screenPageViews, conversions. Dimensions: date, country, deviceCategory, pageTitle. Date format: YYYY-MM-DD.",
+        "description": "Query GA4 data for the user's connected property. Property ID is automatically determined from the workspace - do NOT include property_id in requests. Common metrics: sessions, totalUsers, screenPageViews, conversions. Dimensions: date, country, deviceCategory, pageTitle. Date format: YYYY-MM-DD.",
         "security": [
           {
             "oauth2": ["read"]
