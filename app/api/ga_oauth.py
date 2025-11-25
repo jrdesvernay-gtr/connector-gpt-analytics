@@ -1,6 +1,7 @@
 """Google Analytics OAuth connection endpoints."""
 
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status, Request
 from fastapi.responses import RedirectResponse, JSONResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
