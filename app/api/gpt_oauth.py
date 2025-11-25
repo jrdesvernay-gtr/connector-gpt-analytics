@@ -44,13 +44,13 @@ async def authorize_gpt_callback(
 
 @router.get("/authorize-gpt")
 async def authorize_gpt(
+    request: Request,
     redirect_uri: str = Query(..., description="OAuth redirect URI from Custom GPT"),
     state: Optional[str] = Query(None, description="State parameter for CSRF protection"),
     workspace_id: Optional[str] = Query(None, description="Workspace ID (optional, will use default if not provided)"),
     client_id: Optional[str] = Query(None, description="OAuth client ID"),
     scope: Optional[str] = Query("read", description="Requested scope"),
     token: Optional[str] = Query(None, description="JWT token (for authenticated requests)"),
-    request: Request,
     db: Session = Depends(get_db),
 ):
     """
