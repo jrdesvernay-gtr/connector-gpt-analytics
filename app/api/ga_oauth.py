@@ -115,8 +115,19 @@ async def ga_callback(
             detail="Missing workspace ID in state",
         )
     
+    # Convert workspace_id string to UUID if needed
+    import uuid
+    try:
+        workspace_id_uuid = uuid.UUID(workspace_id) if isinstance(workspace_id, str) else workspace_id
+    except (ValueError, TypeError) as e:
+        logger.error(f"Invalid workspace_id format: {workspace_id}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid workspace ID format: {str(e)}"
+        )
+    
     # Verify workspace exists and get the user
-    workspace = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    workspace = db.query(Workspace).filter(Workspace.id == workspace_id_uuid).first()
     if not workspace:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -203,8 +214,9 @@ async def ga_callback(
         # Multiple properties: ALWAYS show selection page
         # Check if a connection already exists - if so, update credentials but keep existing property
         # If no connection exists, create one with first property temporarily
+        # Use workspace_id_uuid for the query
         existing_connection = db.query(GAConnection).filter(
-            GAConnection.workspace_id == workspace_id
+            GAConnection.workspace_id == workspace_id_uuid
         ).first()
         
         if existing_connection:
@@ -229,7 +241,7 @@ async def ga_callback(
             try:
                 connection = GAOAuthService.create_or_update_connection(
                     db=db,
-                    workspace_id=workspace_id,
+                    workspace_id=str(workspace_id_uuid),  # Convert UUID to string for service method
                     google_account_email=google_account_email,
                     property_id=first_property["property_id"],
                     property_name=first_property["property_name"],
@@ -251,7 +263,7 @@ async def ga_callback(
         
         # Build redirect URL with token and next_url if provided
         select_params = {
-            "workspace_id": workspace_id,
+            "workspace_id": str(workspace_id_uuid),  # Use UUID version
             "token": access_token,
         }
         if next_url:
@@ -265,7 +277,7 @@ async def ga_callback(
         try:
             connection = GAOAuthService.create_or_update_connection(
                 db=db,
-                workspace_id=workspace_id,
+                workspace_id=str(workspace_id_uuid),  # Convert UUID to string for service method
                 google_account_email=google_account_email,
                 property_id=first_property["property_id"],
                 property_name=first_property["property_name"],
@@ -308,7 +320,7 @@ async def ga_callback(
         else:
             # Default: redirect to success page
             access_token = create_access_token(data={"sub": str(user.id)})
-            redirect_url = f"{settings.APP_BASE_URL}/ga/success?workspace_id={workspace_id}&property_id={first_property['property_id']}&token={access_token}"
+            redirect_url = f"{settings.APP_BASE_URL}/ga/success?workspace_id={str(workspace_id_uuid)}&property_id={first_property['property_id']}&token={access_token}"
             logger.debug(f"GA connection completed (single property), redirecting to success page")
         
         return RedirectResponse(url=redirect_url, status_code=302)
