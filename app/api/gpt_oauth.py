@@ -1,4 +1,4 @@
-"""GPT OAuth provider endpoints for Custom GPT authentication."""
+"""GPT OAuth provider endpoints for Custom GPT authentication.latest version 2.0.0"""
 
 import logging
 from typing import Optional
