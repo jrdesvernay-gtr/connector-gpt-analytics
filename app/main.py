@@ -167,7 +167,14 @@ async def user_dashboard(
     has_chatgpt_connection = active_gpt_tokens > 0
     
     # Build dashboard HTML
+    from urllib.parse import urlencode
     token_param = f"?token={token}" if token else ""
+    
+    # Build change property URL with workspace_id
+    change_property_params = {"workspace_id": str(workspace.id)}
+    if token:
+        change_property_params["token"] = token
+    change_property_url = f"{app_settings.APP_BASE_URL}/ga/select-property?{urlencode(change_property_params)}"
     
     ga_status_html = ""
     if has_ga_connection:
@@ -178,7 +185,7 @@ async def user_dashboard(
             <p><strong>Property ID:</strong> {ga_connection.property_id}</p>
             <p><strong>Account:</strong> {ga_connection.google_account_email}</p>
             <div class="actions">
-                <a href="{app_settings.APP_BASE_URL}/ga/select-property{token_param}" class="button">Change Property</a>
+                <a href="{change_property_url}" class="button">Change Property</a>
                 <a href="{app_settings.APP_BASE_URL}/ga/connect{token_param}" class="button button-secondary">Reconnect GA</a>
             </div>
         </div>
