@@ -210,48 +210,54 @@ async def ga_callback(
         )
     
     # If multiple properties, let user choose. Otherwise, auto-select the single property
-    if len(properties) > 1:
-        # Multiple properties: ALWAYS show selection page
-        # Check if a connection already exists - if so, update credentials but keep existing property
-        # If no connection exists, create one with first property temporarily
-        # Use workspace_id_uuid for the query
-        existing_connection = db.query(GAConnection).filter(
-            GAConnection.workspace_id == workspace_id_uuid
-        ).first()
-        
-        if existing_connection:
-            # Update existing connection's credentials without changing property
-            # This preserves the user's previous property selection
-            encryption_service = get_encryption_service()
-            if not credentials.refresh_token:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="No refresh token available in credentials"
-                )
+    try:
+        if len(properties) > 1:
+            # Multiple properties: ALWAYS show selection page
+            # Check if a connection already exists - if so, update credentials but keep existing property
+            # If no connection exists, create one with first property temporarily
+            # Use workspace_id_uuid for the query
+            logger.info(f"Multiple properties ({len(properties)}) found, checking for existing connection...")
+            existing_connection = db.query(GAConnection).filter(
+                GAConnection.workspace_id == workspace_id_uuid
+            ).first()
             
-            encrypted_refresh_token = encryption_service.encrypt(credentials.refresh_token)
-            existing_connection.google_account_email = google_account_email
-            existing_connection.refresh_token_encrypted = encrypted_refresh_token
-            db.commit()
-            db.refresh(existing_connection)
-            connection = existing_connection
-        else:
-            # No existing connection - create temporary one with first property
-            first_property = properties[0]
-            try:
-                connection = GAOAuthService.create_or_update_connection(
-                    db=db,
-                    workspace_id=str(workspace_id_uuid),  # Convert UUID to string for service method
-                    google_account_email=google_account_email,
-                    property_id=first_property["property_id"],
-                    property_name=first_property["property_name"],
-                    credentials=credentials,
-                )
-            except ValueError as e:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=str(e),
-                )
+            if existing_connection:
+                # Update existing connection's credentials without changing property
+                # This preserves the user's previous property selection
+                logger.info(f"Existing connection found, updating credentials...")
+                encryption_service = get_encryption_service()
+                if not credentials.refresh_token:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="No refresh token available in credentials"
+                    )
+                
+                encrypted_refresh_token = encryption_service.encrypt(credentials.refresh_token)
+                existing_connection.google_account_email = google_account_email
+                existing_connection.refresh_token_encrypted = encrypted_refresh_token
+                db.commit()
+                db.refresh(existing_connection)
+                connection = existing_connection
+            else:
+                # No existing connection - create temporary one with first property
+                logger.info(f"No existing connection found, creating new connection with first property...")
+                first_property = properties[0]
+                try:
+                    connection = GAOAuthService.create_or_update_connection(
+                        db=db,
+                        workspace_id=str(workspace_id_uuid),  # Convert UUID to string for service method
+                        google_account_email=google_account_email,
+                        property_id=first_property["property_id"],
+                        property_name=first_property["property_name"],
+                        credentials=credentials,
+                    )
+                    logger.info(f"Connection created successfully for property: {first_property['property_name']}")
+                except Exception as e:
+                    logger.error(f"Error creating connection: {str(e)}", exc_info=True)
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Failed to create connection: {str(e)}"
+                    )
         
         # Redirect to property selection page - ALWAYS show it so user can choose/change property
         # Generate a token for the user so they can access the selection page
