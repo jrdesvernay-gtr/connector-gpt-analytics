@@ -82,6 +82,20 @@ async def privacy_policy():
     )
 
 
+@app.get("/openapi.json", response_class=JSONResponse)
+async def get_openapi_spec():
+    """Serve the OpenAPI specification for Custom GPT Actions."""
+    import json
+    openapi_path = Path(__file__).parent.parent / "openapi.json"
+    if openapi_path.exists():
+        with open(openapi_path, "r") as f:
+            return json.load(f)
+    return JSONResponse(
+        content={"error": "OpenAPI specification not found"},
+        status_code=404
+    )
+
+
 # Import and register routers
 from app.api import auth, google_auth, ga_oauth, gpt_oauth, ga_report
 
