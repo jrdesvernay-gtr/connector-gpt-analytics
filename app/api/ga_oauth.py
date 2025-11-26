@@ -498,12 +498,11 @@ async def select_property(
             logger.info(f"Property selected, redirecting to next URL: {redirect_url[:100]}...")
             return RedirectResponse(url=redirect_url, status_code=302)
         else:
-            # No next URL - redirect back to selection page
+            # No next URL - redirect to dashboard
             from urllib.parse import urlencode
-            redirect_params = {"workspace_id": workspace.id}
-            if token:
-                redirect_params["token"] = token
-            redirect_url = f"{settings.APP_BASE_URL}/ga/select-property?{urlencode(redirect_params)}"
+            from app.core.security import create_access_token
+            access_token = create_access_token(data={"sub": str(current_user.id)})
+            redirect_url = f"{settings.APP_BASE_URL}/dashboard?token={access_token}"
             return RedirectResponse(url=redirect_url)
     
     # For POST requests (API), return JSON

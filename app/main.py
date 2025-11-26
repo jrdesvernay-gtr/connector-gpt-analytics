@@ -170,10 +170,16 @@ async def user_dashboard(
     from urllib.parse import urlencode
     token_param = f"?token={token}" if token else ""
     
-    # Build change property URL with workspace_id
+    # Build change property URL with workspace_id and next parameter to redirect back to dashboard
+    from urllib.parse import quote
     change_property_params = {"workspace_id": str(workspace.id)}
     if token:
         change_property_params["token"] = token
+    # Add next parameter to redirect back to dashboard after property selection
+    dashboard_url = f"{app_settings.APP_BASE_URL}/dashboard"
+    if token:
+        dashboard_url += f"?token={token}"
+    change_property_params["next"] = dashboard_url
     change_property_url = f"{app_settings.APP_BASE_URL}/ga/select-property?{urlencode(change_property_params)}"
     
     ga_status_html = ""
