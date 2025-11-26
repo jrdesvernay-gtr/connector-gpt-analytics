@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status, Request
 from fastapi.responses import RedirectResponse, JSONResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
+from urllib.parse import urlencode, urlparse, parse_qs, urlunparse, unquote
 
 from app.database import get_db
 from app.schemas.ga import Property, PropertyList, GAConnectionResponse
@@ -269,7 +270,7 @@ async def ga_callback(
         # Generate a token for the user so they can access the selection page
         from app.core.security import create_access_token
         from app.config import get_settings
-        settings = get_settings()
+        app_settings = get_settings()
         
         access_token = create_access_token(data={"sub": str(user.id)})
         
@@ -281,7 +282,7 @@ async def ga_callback(
         if next_url:
             select_params["next"] = next_url
         
-        redirect_url = f"{settings.APP_BASE_URL}/ga/select-property?{urlencode(select_params)}"
+        redirect_url = f"{app_settings.APP_BASE_URL}/ga/select-property?{urlencode(select_params)}"
         return RedirectResponse(url=redirect_url)
     else:
         # Single property: auto-select and create connection
