@@ -8,7 +8,7 @@ from fastapi.responses import RedirectResponse, JSONResponse, Response
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.api.dependencies import get_current_user
+from app.api.dependencies import get_current_user, get_user_default_workspace
 from app.models.user import User
 from app.models.workspace import Workspace
 from app.services.gpt_oauth_service import GPTOAuthService
