@@ -87,7 +87,15 @@ async def authorize_gpt(
     # Get settings at function level to avoid scoping issues
     app_settings = get_settings()
     
-    logger.debug(f"GPT authorization requested: redirect_uri={redirect_uri}, workspace_id={workspace_id}, state={state}")
+    logger.info(f"GPT authorization requested: redirect_uri={redirect_uri}, workspace_id={workspace_id}, state={state}, client_id={client_id}")
+    
+    # Validate redirect_uri is present and properly formatted
+    if not redirect_uri or not redirect_uri.strip():
+        logger.error(f"Invalid redirect_uri: empty or None")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing or invalid redirect_uri parameter"
+        )
     
     # Try to get current user (optional - don't fail if not authenticated)
     # Check both token query parameter and Authorization header
@@ -370,6 +378,14 @@ async def authorize_gpt(
     if state:
         query_params['state'] = [state]
     
+    # Validate redirect_uri before building redirect URL
+    if not redirect_uri or not parsed_uri.scheme or not parsed_uri.netloc:
+        logger.error(f"Invalid redirect_uri format: {redirect_uri}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid redirect_uri format. Must be a valid URL."
+        )
+    
     # Rebuild the URL with encoded parameters
     new_query = urlencode(query_params, doseq=True)
     redirect_url = urlunparse((
@@ -382,12 +398,19 @@ async def authorize_gpt(
     ))
 
     logger.info(
-        f"Generated authorization code for workspace {workspace.id}, redirecting to ChatGPT"
+        f"Generated authorization code for workspace {workspace.id}, redirecting to ChatGPT: {redirect_uri}"
     )
-    logger.debug(f"Redirect URL: {redirect_url}")
+    logger.debug(f"Full redirect URL: {redirect_url[:200]}...")
     logger.debug(f"Authorization code (first 20 chars): {authorization_code[:20]}...")
 
-    return RedirectResponse(url=redirect_url, status_code=302)
+    try:
+        return RedirectResponse(url=redirect_url, status_code=302)
+    except Exception as e:
+        logger.error(f"Error creating redirect response: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error redirecting to callback URL: {str(e)}"
+        )
 
 
 @router.post("/oauth/token")

@@ -60,7 +60,7 @@ async def root():
     return {
         "status": "healthy",
         "service": "GA Analytics Connector",
-        "version": "1.0.0",
+        "version": "1.0.1",  # Updated after Railway outage - ensure fresh deployment
     }
 
 
