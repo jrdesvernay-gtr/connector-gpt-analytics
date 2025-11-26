@@ -482,10 +482,13 @@ async def select_property(
             # Create fresh token
             access_token = create_access_token(data={"sub": str(current_user.id)})
             
-            # Append token to next_url
+            # Append token to next_url and add property_changed flag if redirecting to dashboard
             parsed = urlparse(next_url)
             query_params = parse_qs(parsed.query)
             query_params['token'] = [access_token]
+            # If redirecting to dashboard, add property_changed flag
+            if '/dashboard' in parsed.path:
+                query_params['property_changed'] = ['1']
             new_query = urlencode(query_params, doseq=True)
             redirect_url = urlunparse((
                 parsed.scheme,
@@ -498,11 +501,11 @@ async def select_property(
             logger.info(f"Property selected, redirecting to next URL: {redirect_url[:100]}...")
             return RedirectResponse(url=redirect_url, status_code=302)
         else:
-            # No next URL - redirect to dashboard
+            # No next URL - redirect to dashboard with property_changed flag
             from urllib.parse import urlencode
             from app.core.security import create_access_token
             access_token = create_access_token(data={"sub": str(current_user.id)})
-            redirect_url = f"{settings.APP_BASE_URL}/dashboard?token={access_token}"
+            redirect_url = f"{settings.APP_BASE_URL}/dashboard?token={access_token}&property_changed=1"
             return RedirectResponse(url=redirect_url)
     
     # For POST requests (API), return JSON

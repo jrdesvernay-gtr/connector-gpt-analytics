@@ -102,6 +102,7 @@ async def get_openapi_spec():
 @app.get("/dashboard", response_class=HTMLResponse)
 async def user_dashboard(
     token: Optional[str] = Query(None, description="JWT token for authentication"),
+    property_changed: Optional[str] = Query(None, description="Flag to show property changed message"),
     db: Session = Depends(get_db),
 ):
     """
@@ -359,6 +360,8 @@ async def user_dashboard(
                     Logged in as: <strong>{user.email}</strong>
                 </div>
             </header>
+            
+            {('<div class="info-box" style="background: #d4edda; border-left: 4px solid #28a745; margin-bottom: 20px;"><h2 style="color: #155724; margin-bottom: 10px;">✓ Property Changed Successfully!</h2><p style="color: #155724; margin: 0;"><strong>Next step:</strong> Go back to ChatGPT and ask a question. Your queries will now use the new property automatically. No need to re-authorize ChatGPT!</p></div>' if property_changed else '')}
             
             <div class="info-box">
                 <h2>Quick Actions</h2>
