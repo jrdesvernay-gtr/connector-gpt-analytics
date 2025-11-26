@@ -210,13 +210,13 @@ async def ga_callback(
         )
     
     # If multiple properties, let user choose. Otherwise, auto-select the single property
-    try:
-        if len(properties) > 1:
-            # Multiple properties: ALWAYS show selection page
-            # Check if a connection already exists - if so, update credentials but keep existing property
-            # If no connection exists, create one with first property temporarily
-            # Use workspace_id_uuid for the query
-            logger.info(f"Multiple properties ({len(properties)}) found, checking for existing connection...")
+    if len(properties) > 1:
+        # Multiple properties: ALWAYS show selection page
+        # Check if a connection already exists - if so, update credentials but keep existing property
+        # If no connection exists, create one with first property temporarily
+        # Use workspace_id_uuid for the query
+        logger.info(f"Multiple properties ({len(properties)}) found, checking for existing connection...")
+        try:
             existing_connection = db.query(GAConnection).filter(
                 GAConnection.workspace_id == workspace_id_uuid
             ).first()
@@ -258,6 +258,12 @@ async def ga_callback(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail=f"Failed to create connection: {str(e)}"
                     )
+        except Exception as e:
+            logger.error(f"Error in GA callback with multiple properties: {str(e)}", exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error processing GA connection: {str(e)}"
+            )
         
         # Redirect to property selection page - ALWAYS show it so user can choose/change property
         # Generate a token for the user so they can access the selection page
