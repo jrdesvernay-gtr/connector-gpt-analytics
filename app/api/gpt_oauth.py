@@ -713,3 +713,247 @@ async def oauth_revoke(
     logger.info("Token successfully revoked")
     return JSONResponse(content={"message": "Token revoked successfully"})
 
+
+@router.get("/revoke-chatgpt")
+async def revoke_chatgpt_page(
+    token: Optional[str] = Query(None, description="JWT token for authentication"),
+    current_user: User = Depends(get_current_user),
+    workspace: Workspace = Depends(get_user_default_workspace),
+    db: Session = Depends(get_db),
+):
+    """
+    User-facing page to revoke ChatGPT authorization for this workspace.
+    
+    This allows users to reset their ChatGPT connection so they can re-authorize
+    and select a different GA property if needed.
+    """
+    from app.config import get_settings
+    from app.models.gpt_token import GPTToken
+    from sqlalchemy import and_
+    
+    app_settings = get_settings()
+    
+    # Check if there are any active ChatGPT authorizations
+    active_tokens = db.query(GPTToken).filter(
+        and_(
+            GPTToken.workspace_id == workspace.id,
+            GPTToken.revoked == False,
+        )
+    ).count()
+    
+    has_active_connection = active_tokens > 0
+    
+    # Build conditional HTML parts to avoid backslash issues in f-strings
+    status_class = 'active' if has_active_connection else 'inactive'
+    status_text = 'Active ChatGPT connection' if has_active_connection else 'No active ChatGPT connection'
+    
+    if has_active_connection:
+        warning_html = '<div class="warning"><strong>⚠️ Warning:</strong> Revoking will disconnect ChatGPT from your GA data. You will need to re-authorize in ChatGPT to use it again.</div>'
+        confirm_msg = "Are you sure you want to revoke your ChatGPT connection? You will need to re-authorize in ChatGPT."
+        token_input_html = f'<input type="hidden" name="token" value="{token or ""}">' if token else ''
+        form_html = f'<form method="POST" action="/revoke-chatgpt">{token_input_html}<button type="submit" class="button" onclick="return confirm(\'{confirm_msg}\');">Revoke ChatGPT Connection</button></form>'
+    else:
+        warning_html = '<div class="info">You do not have any active ChatGPT connections to revoke.</div>'
+        form_html = ''
+    
+    token_param = f'?token={token}' if token else ''
+    
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Revoke ChatGPT Connection - Ask My Analytics</title>
+        <style>
+            body {{ 
+                font-family: Arial, sans-serif; 
+                max-width: 600px; 
+                margin: 50px auto; 
+                padding: 20px; 
+                background: #f5f5f5;
+            }}
+            .container {{
+                background: white;
+                padding: 30px;
+                border-radius: 8px;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            }}
+            h1 {{ color: #333; margin-top: 0; }}
+            .info {{ 
+                background: #e7f3ff; 
+                padding: 15px; 
+                border-radius: 5px; 
+                margin: 20px 0;
+                border-left: 4px solid #007bff;
+            }}
+            .warning {{ 
+                background: #fff3cd; 
+                padding: 15px; 
+                border-radius: 5px; 
+                margin: 20px 0;
+                border-left: 4px solid #ffc107;
+            }}
+            .button {{
+                display: inline-block;
+                padding: 12px 24px;
+                background: #dc3545;
+                color: white;
+                text-decoration: none;
+                border-radius: 5px;
+                margin: 10px 5px 10px 0;
+                border: none;
+                cursor: pointer;
+                font-size: 16px;
+            }}
+            .button:hover {{
+                background: #c82333;
+            }}
+            .button-secondary {{
+                background: #6c757d;
+            }}
+            .button-secondary:hover {{
+                background: #5a6268;
+            }}
+            .status {{
+                padding: 10px;
+                margin: 10px 0;
+                border-radius: 5px;
+            }}
+            .status.active {{
+                background: #d4edda;
+                color: #155724;
+                border: 1px solid #c3e6cb;
+            }}
+            .status.inactive {{
+                background: #f8d7da;
+                color: #721c24;
+                border: 1px solid #f5c6cb;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>Revoke ChatGPT Connection</h1>
+            
+            <div class="info">
+                <strong>What this does:</strong>
+                <ul style="margin: 10px 0;">
+                    <li>Revokes your current ChatGPT authorization</li>
+                    <li>Next time you use the Custom GPT, you'll need to re-authorize</li>
+                    <li>You'll be able to select a different GA property during re-authorization</li>
+                </ul>
+            </div>
+            
+            <div class="status {status_class}">
+                <strong>Current Status:</strong> {status_text}
+            </div>
+            
+            {warning_html}
+            
+            {form_html}
+            
+            <p style="margin-top: 30px;">
+                <a href="{app_settings.APP_BASE_URL}/ga/connect{token_param}" class="button button-secondary">Connect/Change GA Property</a>
+                <a href="{app_settings.APP_BASE_URL}/authorize-gpt{token_param}" class="button button-secondary">Re-authorize ChatGPT</a>
+            </p>
+        </div>
+    </body>
+    </html>
+    """
+    
+    from fastapi.responses import HTMLResponse
+    return HTMLResponse(content=html)
+
+
+@router.post("/revoke-chatgpt")
+async def revoke_chatgpt_action(
+    token: Optional[str] = Form(None, description="JWT token for authentication"),
+    current_user: User = Depends(get_current_user),
+    workspace: Workspace = Depends(get_user_default_workspace),
+    db: Session = Depends(get_db),
+):
+    """
+    Revoke all ChatGPT authorizations for the user's workspace.
+    
+    This will force the user to re-authorize in ChatGPT next time they use it,
+    allowing them to go through the full flow again and select a different GA property.
+    """
+    from app.config import get_settings
+    from app.models.gpt_token import GPTToken
+    from sqlalchemy import and_
+    
+    app_settings = get_settings()
+    
+    # Revoke all active tokens for this workspace
+    revoked_count = GPTOAuthService.revoke_all_workspace_tokens(db, str(workspace.id))
+    
+    success_html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>ChatGPT Connection Revoked - Ask My Analytics</title>
+        <style>
+            body {{ 
+                font-family: Arial, sans-serif; 
+                max-width: 600px; 
+                margin: 50px auto; 
+                padding: 20px; 
+                background: #f5f5f5;
+            }}
+            .container {{
+                background: white;
+                padding: 30px;
+                border-radius: 8px;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            }}
+            h1 {{ color: #28a745; margin-top: 0; }}
+            .success {{
+                background: #d4edda;
+                padding: 15px;
+                border-radius: 5px;
+                margin: 20px 0;
+                border-left: 4px solid #28a745;
+                color: #155724;
+            }}
+            .button {{
+                display: inline-block;
+                padding: 12px 24px;
+                background: #007bff;
+                color: white;
+                text-decoration: none;
+                border-radius: 5px;
+                margin: 10px 5px 10px 0;
+                font-size: 16px;
+            }}
+            .button:hover {{
+                background: #0056b3;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>✓ ChatGPT Connection Revoked</h1>
+            
+            <div class="success">
+                <strong>Success!</strong> Your ChatGPT connection has been revoked.
+                {f'Revoked {revoked_count} authorization(s).' if revoked_count > 0 else ''}
+            </div>
+            
+            <p><strong>What's next?</strong></p>
+            <ol>
+                <li>Go back to ChatGPT and try to use the Custom GPT</li>
+                <li>ChatGPT will ask you to authorize again</li>
+                <li>During re-authorization, you'll be able to select a different GA property</li>
+            </ol>
+            
+            <p style="margin-top: 30px;">
+                <a href="{app_settings.APP_BASE_URL}/ga/connect{'?token=' + token if token else ''}" class="button">Connect/Change GA Property</a>
+                <a href="{app_settings.APP_BASE_URL}/authorize-gpt{'?token=' + token if token else ''}" class="button">Re-authorize ChatGPT Now</a>
+            </p>
+        </div>
+    </body>
+    </html>
+    """
+    
+    from fastapi.responses import HTMLResponse
+    return HTMLResponse(content=success_html)
+

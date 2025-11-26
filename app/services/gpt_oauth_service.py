@@ -405,4 +405,35 @@ class GPTOAuthService:
             return True
 
         return False
+    
+    @staticmethod
+    def revoke_all_workspace_tokens(db: Session, workspace_id: str) -> int:
+        """
+        Revoke all active GPT tokens for a workspace.
+        
+        Args:
+            db: Database session
+            workspace_id: Workspace ID (string UUID)
+            
+        Returns:
+            Number of tokens revoked
+        """
+        import uuid
+        try:
+            workspace_id_uuid = uuid.UUID(workspace_id) if isinstance(workspace_id, str) else workspace_id
+        except (ValueError, TypeError):
+            logger.error(f"Invalid workspace_id format: {workspace_id}")
+            return 0
+        
+        # Revoke all active tokens for this workspace
+        result = db.query(GPTToken).filter(
+            and_(
+                GPTToken.workspace_id == workspace_id_uuid,
+                GPTToken.revoked == False,
+            )
+        ).update({"revoked": True})
+        
+        db.commit()
+        logger.info(f"Revoked {result} GPT token(s) for workspace {workspace_id}")
+        return result
 
