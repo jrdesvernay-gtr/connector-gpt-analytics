@@ -157,15 +157,17 @@ async def user_dashboard(
         GAConnection.workspace_id == workspace.id
     ).first()
     
+    # Check for any GPT tokens (even expired ones are valid since they can be refreshed)
+    # A token exists if there's any non-revoked token record, regardless of expiration
     active_gpt_tokens = db.query(GPTToken).filter(
         and_(
             GPTToken.workspace_id == workspace.id,
             GPTToken.revoked == False,
         )
-    ).count()
+    ).first()
     
     has_ga_connection = ga_connection is not None
-    has_chatgpt_connection = active_gpt_tokens > 0
+    has_chatgpt_connection = active_gpt_tokens is not None
     
     # Build dashboard HTML
     from urllib.parse import urlencode
