@@ -60,10 +60,11 @@ async def run_ga_report(
             .first()
         )
     else:
-        # Use workspace's default GA connection
+        # Use workspace's default GA connection - use most recently updated/created
         ga_connection = (
             db.query(GAConnection)
             .filter(GAConnection.workspace_id == workspace.id)
+            .order_by(GAConnection.created_at.desc())  # Most recent first
             .first()
         )
     

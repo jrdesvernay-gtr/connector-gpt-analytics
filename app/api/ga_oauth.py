@@ -310,9 +310,12 @@ async def ga_callback(
         # Use workspace_id_uuid for the query
         logger.info(f"Multiple properties ({len(properties)}) found, checking for existing connection...")
         try:
-            existing_connection = db.query(GAConnection).filter(
-                GAConnection.workspace_id == workspace_id_uuid
-            ).first()
+            existing_connection = (
+                db.query(GAConnection)
+                .filter(GAConnection.workspace_id == workspace_id_uuid)
+                .order_by(GAConnection.created_at.desc())  # Most recent first
+                .first()
+            )
             
             if existing_connection:
                 # Update existing connection's credentials without changing property
@@ -518,10 +521,13 @@ async def select_property(
                 detail="Workspace not found",
             )
     
-    # Get GA connection for workspace
-    connection = db.query(GAConnection).filter(
-        GAConnection.workspace_id == workspace.id
-    ).first()
+    # Get GA connection for workspace - use most recently updated/created
+    connection = (
+        db.query(GAConnection)
+        .filter(GAConnection.workspace_id == workspace.id)
+        .order_by(GAConnection.created_at.desc())  # Most recent first
+        .first()
+    )
     
     if not connection:
         raise HTTPException(
@@ -660,10 +666,13 @@ async def select_property_page(
                 detail="Workspace not found",
             )
     
-    # Get GA connection (should exist after OAuth callback)
-    connection = db.query(GAConnection).filter(
-        GAConnection.workspace_id == workspace.id
-    ).first()
+    # Get GA connection (should exist after OAuth callback) - use most recently updated/created
+    connection = (
+        db.query(GAConnection)
+        .filter(GAConnection.workspace_id == workspace.id)
+        .order_by(GAConnection.created_at.desc())  # Most recent first
+        .first()
+    )
     
     if not connection:
         raise HTTPException(

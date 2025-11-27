@@ -152,10 +152,13 @@ async def user_dashboard(
     
     app_settings = get_settings()
     
-    # Get current connections
-    ga_connection = db.query(GAConnection).filter(
-        GAConnection.workspace_id == workspace.id
-    ).first()
+    # Get current connections - use most recently updated/created connection
+    ga_connection = (
+        db.query(GAConnection)
+        .filter(GAConnection.workspace_id == workspace.id)
+        .order_by(GAConnection.created_at.desc())  # Most recent first
+        .first()
+    )
     
     # Check for any GPT tokens (even expired ones are valid since they can be refreshed)
     # A token exists if there's any non-revoked token record, regardless of expiration
