@@ -401,12 +401,10 @@ async def ga_callback(
         
         # Redirect to next_url if provided, otherwise success page
         from app.config import get_settings
-        from urllib.parse import urlencode, urlparse, parse_qs, urlunparse
         settings = get_settings()
         
         if next_url:
             # URL-decode next_url in case it was encoded
-            from urllib.parse import unquote
             try:
                 next_url_decoded = unquote(next_url)
             except Exception:
