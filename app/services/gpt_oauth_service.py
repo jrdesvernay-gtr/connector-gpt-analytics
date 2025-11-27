@@ -117,6 +117,7 @@ class GPTOAuthService:
         ga_connection = (
             db.query(GAConnection)
             .filter(GAConnection.workspace_id == workspace.id)
+            .order_by(GAConnection.updated_at.desc())  # Order by updated_at to get most recently modified
             .first()
         )
         if not ga_connection:

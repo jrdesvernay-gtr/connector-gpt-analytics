@@ -206,9 +206,11 @@ class GAOAuthService:
         
         if existing_connection:
             # Update existing connection
+            from datetime import datetime
             existing_connection.google_account_email = google_account_email
             existing_connection.property_name = property_name
             existing_connection.refresh_token_encrypted = encrypted_refresh_token
+            existing_connection.updated_at = datetime.utcnow()  # Update timestamp
             db.commit()
             db.refresh(existing_connection)
             return existing_connection

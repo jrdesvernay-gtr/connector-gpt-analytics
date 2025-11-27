@@ -22,6 +22,7 @@ class GAConnection(Base):
     refresh_token_encrypted = Column(String(2048), nullable=False)  # Encrypted Google refresh token
     last_synced_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)  # Track when connection was last modified
 
     # Relationships
     workspace = relationship("Workspace", back_populates="ga_connections")

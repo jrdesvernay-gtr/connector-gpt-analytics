@@ -313,7 +313,7 @@ async def ga_callback(
             existing_connection = (
                 db.query(GAConnection)
                 .filter(GAConnection.workspace_id == workspace_id_uuid)
-                .order_by(GAConnection.id.desc())  # Use ID for consistent ordering
+                .order_by(GAConnection.updated_at.desc())  # Order by updated_at, not id
                 .first()
             )
             
@@ -329,8 +329,10 @@ async def ga_callback(
                     )
                 
                 encrypted_refresh_token = encryption_service.encrypt(credentials.refresh_token)
+                from datetime import datetime
                 existing_connection.google_account_email = google_account_email
                 existing_connection.refresh_token_encrypted = encrypted_refresh_token
+                existing_connection.updated_at = datetime.utcnow()  # Update timestamp
                 db.commit()
                 db.refresh(existing_connection)
                 connection = existing_connection
@@ -457,10 +459,13 @@ async def get_ga_properties(
                 detail="Workspace not found",
             )
     
-    # Get GA connection for workspace
-    connection = db.query(GAConnection).filter(
-        GAConnection.workspace_id == workspace.id
-    ).first()
+    # Get GA connection for workspace - order by updated_at to get most recently modified
+    connection = (
+        db.query(GAConnection)
+        .filter(GAConnection.workspace_id == workspace.id)
+        .order_by(GAConnection.updated_at.desc())  # Order by updated_at, not id
+        .first()
+    )
     
     if not connection:
         raise HTTPException(
@@ -521,11 +526,11 @@ async def select_property(
                 detail="Workspace not found",
             )
     
-    # Get GA connection for workspace - there should only be one per workspace
+    # Get GA connection for workspace - order by updated_at to get most recently modified
     connection = (
         db.query(GAConnection)
         .filter(GAConnection.workspace_id == workspace.id)
-        .order_by(GAConnection.id.desc())  # Use ID for consistent ordering
+        .order_by(GAConnection.updated_at.desc())  # Order by updated_at, not id
         .first()
     )
     
@@ -569,9 +574,11 @@ async def select_property(
         for other_conn in other_connections:
             db.delete(other_conn)
         
-        # Update the current connection
+        # Update the current connection - set updated_at to ensure it's considered "most recent"
+        from datetime import datetime
         connection.property_id = property_id
         connection.property_name = selected_property["property_name"]
+        connection.updated_at = datetime.utcnow()  # Update timestamp so ordering works correctly
         db.commit()
         db.refresh(connection)
         
@@ -682,11 +689,11 @@ async def select_property_page(
                 detail="Workspace not found",
             )
     
-    # Get GA connection (should exist after OAuth callback) - there should only be one per workspace
+    # Get GA connection (should exist after OAuth callback) - order by updated_at
     connection = (
         db.query(GAConnection)
         .filter(GAConnection.workspace_id == workspace.id)
-        .order_by(GAConnection.id.desc())  # Use ID for consistent ordering
+        .order_by(GAConnection.updated_at.desc())  # Order by updated_at, not id
         .first()
     )
     
