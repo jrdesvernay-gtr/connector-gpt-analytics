@@ -899,8 +899,9 @@ async def revoke_chatgpt_page(
     if has_active_connection:
         warning_html = '<div class="warning"><strong>⚠️ Warning:</strong> Revoking will disconnect ChatGPT from your GA data. You will need to re-authorize in ChatGPT to use it again.</div>'
         confirm_msg = "Are you sure you want to revoke your ChatGPT connection? You will need to re-authorize in ChatGPT."
-        token_input_html = f'<input type="hidden" name="token" value="{token or ""}">' if token else ''
-        form_html = f'<form method="POST" action="/revoke-chatgpt">{token_input_html}<button type="submit" class="button" onclick="return confirm(\'{confirm_msg}\');">Revoke ChatGPT Connection</button></form>'
+        # Include token in action URL so get_current_user can read it from query params
+        action_url = f"/revoke-chatgpt?token={token}" if token else "/revoke-chatgpt"
+        form_html = f'<form method="POST" action="{action_url}"><button type="submit" class="button" onclick="return confirm(\'{confirm_msg}\');">Revoke ChatGPT Connection</button></form>'
     else:
         warning_html = '<div class="info">You do not have any active ChatGPT connections to revoke.</div>'
         form_html = ''
