@@ -313,7 +313,7 @@ async def ga_callback(
             existing_connection = (
                 db.query(GAConnection)
                 .filter(GAConnection.workspace_id == workspace_id_uuid)
-                .order_by(GAConnection.created_at.desc())  # Most recent first
+                .order_by(GAConnection.id.desc())  # Use ID for consistent ordering
                 .first()
             )
             
@@ -521,11 +521,11 @@ async def select_property(
                 detail="Workspace not found",
             )
     
-    # Get GA connection for workspace - use most recently updated/created
+    # Get GA connection for workspace - there should only be one per workspace
     connection = (
         db.query(GAConnection)
         .filter(GAConnection.workspace_id == workspace.id)
-        .order_by(GAConnection.created_at.desc())  # Most recent first
+        .order_by(GAConnection.id.desc())  # Use ID for consistent ordering
         .first()
     )
     
@@ -555,11 +555,27 @@ async def select_property(
         )
     
     # Update connection if different property
+    # Also ensure there's only ONE connection per workspace (delete any others)
     if connection.property_id != property_id:
+        # Delete any other connections for this workspace to ensure only one exists
+        other_connections = (
+            db.query(GAConnection)
+            .filter(
+                GAConnection.workspace_id == workspace.id,
+                GAConnection.id != connection.id
+            )
+            .all()
+        )
+        for other_conn in other_connections:
+            db.delete(other_conn)
+        
+        # Update the current connection
         connection.property_id = property_id
         connection.property_name = selected_property["property_name"]
         db.commit()
         db.refresh(connection)
+        
+        logger.info(f"Updated GA connection for workspace {workspace.id} to property {property_id} ({selected_property['property_name']})")
     
     # For GET requests (browser clicks), redirect appropriately
     from app.config import get_settings
@@ -666,11 +682,11 @@ async def select_property_page(
                 detail="Workspace not found",
             )
     
-    # Get GA connection (should exist after OAuth callback) - use most recently updated/created
+    # Get GA connection (should exist after OAuth callback) - there should only be one per workspace
     connection = (
         db.query(GAConnection)
         .filter(GAConnection.workspace_id == workspace.id)
-        .order_by(GAConnection.created_at.desc())  # Most recent first
+        .order_by(GAConnection.id.desc())  # Use ID for consistent ordering
         .first()
     )
     

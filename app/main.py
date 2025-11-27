@@ -152,11 +152,11 @@ async def user_dashboard(
     
     app_settings = get_settings()
     
-    # Get current connections - use most recently updated/created connection
+    # Get current connections - there should only be one per workspace
     ga_connection = (
         db.query(GAConnection)
         .filter(GAConnection.workspace_id == workspace.id)
-        .order_by(GAConnection.created_at.desc())  # Most recent first
+        .order_by(GAConnection.id.desc())  # Use ID for consistent ordering
         .first()
     )
     

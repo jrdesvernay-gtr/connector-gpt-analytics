@@ -60,11 +60,12 @@ async def run_ga_report(
             .first()
         )
     else:
-        # Use workspace's default GA connection - use most recently updated/created
+        # Use workspace's default GA connection
+        # There should only be one connection per workspace, but if multiple exist, use the most recent
         ga_connection = (
             db.query(GAConnection)
             .filter(GAConnection.workspace_id == workspace.id)
-            .order_by(GAConnection.created_at.desc())  # Most recent first
+            .order_by(GAConnection.id.desc())  # Use ID (UUID) for consistent ordering - newer UUIDs are typically later
             .first()
         )
     
