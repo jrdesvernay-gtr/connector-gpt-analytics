@@ -78,6 +78,7 @@ async def ga_connect(
 
 
 @router.get("/ga/callback")
+@router.head("/ga/callback")  # Also handle HEAD requests (for preflight checks)
 async def ga_callback(
     request: Request,
     code: str = None,
@@ -88,7 +89,14 @@ async def ga_callback(
     """
     Handle Google Analytics OAuth callback.
     Exchanges authorization code for credentials and fetches properties.
+    
+    Also handles HEAD requests (returns 200 OK without processing).
     """
+    # Handle HEAD requests (preflight checks) - return success without processing
+    if request.method == "HEAD":
+        from fastapi.responses import Response
+        return Response(status_code=200)
+    
     print(f"DEBUG: GA callback received")
     print(f"DEBUG: Full callback URL: {request.url}")
     print(f"DEBUG: Query params: code={'Yes' if code else 'No'}, state={state}, error={error}")
@@ -223,9 +231,20 @@ async def ga_callback(
         credentials = GAOAuthService.exchange_code_for_credentials(code)
     except Exception as e:
         import traceback
-        error_detail = f"Failed to exchange authorization code: {str(e)}"
+        error_type = type(e).__name__
+        error_message = str(e)
+        error_detail = f"Failed to exchange authorization code: {error_type}: {error_message}"
         print(f"GA Callback Error: {error_detail}")
         traceback.print_exc()
+        
+        # Provide more helpful error messages for common OAuth errors
+        if "invalid_grant" in error_message.lower() or "InvalidGrantError" in error_type:
+            error_detail = (
+                "The authorization code has expired or has already been used. "
+                "This can happen if you took too long to complete the authorization, "
+                "or if the page was refreshed. Please try reconnecting from the dashboard."
+            )
+        
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=error_detail,
