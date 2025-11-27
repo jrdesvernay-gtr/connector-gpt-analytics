@@ -91,118 +91,159 @@ async def authorize_gpt(
     
     # If no redirect_uri, show helpful message (coming from dashboard, not OAuth flow)
     if not redirect_uri or not redirect_uri.strip():
-        # Check if user is authenticated
-        user = None
-        if token:
-            try:
-                from app.core.security import verify_token
-                import uuid
-                payload = verify_token(token)
-                if payload:
-                    user_id = payload.get("sub")
-                    if user_id:
-                        user_id_uuid = uuid.UUID(user_id) if isinstance(user_id, str) else user_id
-                        user = db.query(User).filter(User.id == user_id_uuid).first()
-            except Exception:
-                pass
-        
-        if user:
-            # User is authenticated - check if already authorized
-            workspace = None
-            if workspace_id:
-                import uuid
+        try:
+            # Check if user is authenticated
+            user = None
+            if token:
                 try:
-                    workspace_id_uuid = uuid.UUID(workspace_id) if isinstance(workspace_id, str) else workspace_id
-                    workspace = db.query(Workspace).filter(
-                        Workspace.id == workspace_id_uuid,
-                        Workspace.user_id == user.id
-                    ).first()
-                except (ValueError, TypeError):
+                    from app.core.security import verify_token
+                    import uuid
+                    payload = verify_token(token)
+                    if payload:
+                        user_id = payload.get("sub")
+                        if user_id:
+                            user_id_uuid = uuid.UUID(user_id) if isinstance(user_id, str) else user_id
+                            user = db.query(User).filter(User.id == user_id_uuid).first()
+                except Exception as e:
+                    logger.debug(f"Error verifying token: {e}")
                     pass
             
-            if not workspace:
-                from app.api.dependencies import get_user_default_workspace
-                workspace = get_user_default_workspace(db=db, current_user=user)
-            
-            # Check if already authorized
-            from app.models.gpt_token import GPTToken
-            from sqlalchemy import and_
-            has_tokens = db.query(GPTToken).filter(
-                and_(
-                    GPTToken.workspace_id == workspace.id,
-                    GPTToken.revoked == False,
-                )
-            ).count() > 0
-            
-            if has_tokens:
-                # Already authorized - show message
-                html = f"""
-                <!DOCTYPE html>
-                <html>
-                <head>
-                    <title>ChatGPT Already Authorized - Ask My Analytics</title>
-                    <style>
-                        body {{ font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; background: #f5f5f5; }}
-                        .container {{ background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
-                        .success {{ background: #d4edda; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #28a745; color: #155724; }}
-                        .button {{ display: inline-block; padding: 12px 24px; background: #007bff; color: white; text-decoration: none; border-radius: 5px; margin: 10px 5px 10px 0; }}
-                    </style>
-                </head>
-                <body>
-                    <div class="container">
-                        <h1>✓ ChatGPT Already Authorized</h1>
-                        <div class="success">
-                            <p><strong>Good news!</strong> Your ChatGPT is already connected and authorized.</p>
-                            <p>You can go back to ChatGPT and start querying your GA4 data. The connection is active and working.</p>
+            if user:
+                # User is authenticated - check if already authorized
+                workspace = None
+                if workspace_id:
+                    import uuid
+                    try:
+                        workspace_id_uuid = uuid.UUID(workspace_id) if isinstance(workspace_id, str) else workspace_id
+                        workspace = db.query(Workspace).filter(
+                            Workspace.id == workspace_id_uuid,
+                            Workspace.user_id == user.id
+                        ).first()
+                    except (ValueError, TypeError) as e:
+                        logger.debug(f"Error parsing workspace_id: {e}")
+                        pass
+                
+                if not workspace:
+                    # Get default workspace for user (manually, not using dependency)
+                    workspace = db.query(Workspace).filter(Workspace.user_id == user.id).first()
+                    if not workspace:
+                        # Create default workspace if none exists
+                        workspace = Workspace(
+                            user_id=user.id,
+                            name="My Workspace"
+                        )
+                        db.add(workspace)
+                        db.commit()
+                        db.refresh(workspace)
+                
+                # Check if already authorized
+                from app.models.gpt_token import GPTToken
+                from sqlalchemy import and_
+                has_tokens = db.query(GPTToken).filter(
+                    and_(
+                        GPTToken.workspace_id == workspace.id,
+                        GPTToken.revoked == False,
+                    )
+                ).count() > 0
+                
+                if has_tokens:
+                    # Already authorized - show message
+                    html = f"""
+                    <!DOCTYPE html>
+                    <html>
+                    <head>
+                        <title>ChatGPT Already Authorized - Ask My Analytics</title>
+                        <style>
+                            body {{ font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; background: #f5f5f5; }}
+                            .container {{ background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
+                            .success {{ background: #d4edda; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #28a745; color: #155724; }}
+                            .button {{ display: inline-block; padding: 12px 24px; background: #007bff; color: white; text-decoration: none; border-radius: 5px; margin: 10px 5px 10px 0; }}
+                        </style>
+                    </head>
+                    <body>
+                        <div class="container">
+                            <h1>✓ ChatGPT Already Authorized</h1>
+                            <div class="success">
+                                <p><strong>Good news!</strong> Your ChatGPT is already connected and authorized.</p>
+                                <p>You can go back to ChatGPT and start querying your GA4 data. The connection is active and working.</p>
+                            </div>
+                            <p><a href="{app_settings.APP_BASE_URL}/dashboard{'?token=' + token if token else ''}" class="button">← Back to Dashboard</a></p>
                         </div>
-                        <p><a href="{app_settings.APP_BASE_URL}/dashboard{'?token=' + token if token else ''}" class="button">← Back to Dashboard</a></p>
-                    </div>
-                </body>
-                </html>
-                """
-                from fastapi.responses import HTMLResponse
-                return HTMLResponse(content=html)
-            else:
-                # Not authorized - explain they need to authorize from ChatGPT
-                html = f"""
-                <!DOCTYPE html>
-                <html>
-                <head>
-                    <title>Authorize ChatGPT - Ask My Analytics</title>
-                    <style>
-                        body {{ font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; background: #f5f5f5; }}
-                        .container {{ background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
-                        .info {{ background: #e7f3ff; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #007bff; }}
-                        .button {{ display: inline-block; padding: 12px 24px; background: #007bff; color: white; text-decoration: none; border-radius: 5px; margin: 10px 5px 10px 0; }}
-                    </style>
-                </head>
-                <body>
-                    <div class="container">
-                        <h1>Authorize ChatGPT</h1>
-                        <div class="info">
-                            <p><strong>How to authorize ChatGPT:</strong></p>
-                            <ol>
-                                <li>Go to ChatGPT and open your Custom GPT</li>
-                                <li>Ask a question like "What were my sessions yesterday?"</li>
-                                <li>ChatGPT will automatically prompt you to authorize</li>
-                                <li>Click "Authorize" and complete the OAuth flow</li>
-                            </ol>
-                            <p><strong>Note:</strong> Authorization must be initiated from ChatGPT, not from this dashboard.</p>
+                    </body>
+                    </html>
+                    """
+                    from fastapi.responses import HTMLResponse
+                    return HTMLResponse(content=html)
+                else:
+                    # Not authorized - explain they need to authorize from ChatGPT
+                    html = f"""
+                    <!DOCTYPE html>
+                    <html>
+                    <head>
+                        <title>Authorize ChatGPT - Ask My Analytics</title>
+                        <style>
+                            body {{ font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; background: #f5f5f5; }}
+                            .container {{ background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
+                            .info {{ background: #e7f3ff; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #007bff; }}
+                            .button {{ display: inline-block; padding: 12px 24px; background: #007bff; color: white; text-decoration: none; border-radius: 5px; margin: 10px 5px 10px 0; }}
+                        </style>
+                    </head>
+                    <body>
+                        <div class="container">
+                            <h1>Authorize ChatGPT</h1>
+                            <div class="info">
+                                <p><strong>How to authorize ChatGPT:</strong></p>
+                                <ol>
+                                    <li>Go to ChatGPT and open your Custom GPT</li>
+                                    <li>Ask a question like "What were my sessions yesterday?"</li>
+                                    <li>ChatGPT will automatically prompt you to authorize</li>
+                                    <li>Click "Authorize" and complete the OAuth flow</li>
+                                </ol>
+                                <p><strong>Note:</strong> Authorization must be initiated from ChatGPT, not from this dashboard.</p>
+                            </div>
+                            <p><a href="{app_settings.APP_BASE_URL}/dashboard{'?token=' + token if token else ''}" class="button">← Back to Dashboard</a></p>
                         </div>
-                        <p><a href="{app_settings.APP_BASE_URL}/dashboard{'?token=' + token if token else ''}" class="button">← Back to Dashboard</a></p>
+                    </body>
+                    </html>
+                    """
+                    from fastapi.responses import HTMLResponse
+                    return HTMLResponse(content=html)
+            
+            # Not authenticated and no redirect_uri - invalid request
+            logger.error(f"Invalid request: no redirect_uri and not authenticated")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Missing redirect_uri parameter. Authorization must be initiated from ChatGPT."
+            )
+        except Exception as e:
+            # Catch any errors and show friendly error page
+            logger.error(f"Error in authorize-gpt endpoint: {str(e)}", exc_info=True)
+            error_html = f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Error - Ask My Analytics</title>
+                <style>
+                    body {{ font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; background: #f5f5f5; }}
+                    .container {{ background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
+                    .error {{ background: #f8d7da; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #dc3545; color: #721c24; }}
+                    .button {{ display: inline-block; padding: 12px 24px; background: #007bff; color: white; text-decoration: none; border-radius: 5px; margin: 10px 5px 10px 0; }}
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <h1>Error</h1>
+                    <div class="error">
+                        <p><strong>An error occurred:</strong></p>
+                        <p>Please try going back to the dashboard and try again, or authorize ChatGPT directly from ChatGPT.</p>
                     </div>
-                </body>
-                </html>
-                """
-                from fastapi.responses import HTMLResponse
-                return HTMLResponse(content=html)
-        
-        # Not authenticated and no redirect_uri - invalid request
-        logger.error(f"Invalid request: no redirect_uri and not authenticated")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Missing redirect_uri parameter. Authorization must be initiated from ChatGPT."
-        )
+                    <p><a href="{app_settings.APP_BASE_URL}/dashboard{'?token=' + token if token else ''}" class="button">← Back to Dashboard</a></p>
+                </div>
+            </body>
+            </html>
+            """
+            from fastapi.responses import HTMLResponse
+            return HTMLResponse(content=error_html, status_code=500)
     
     # Try to get current user (optional - don't fail if not authenticated)
     # Check both token query parameter and Authorization header

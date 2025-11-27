@@ -107,13 +107,49 @@ async def ga_callback(
         )
     
     # Parse workspace_id, csrf_token, and next_url from state
-    workspace_id, csrf_token, next_url = GAOAuthService.parse_state(state or "")
-    print(f"DEBUG: Parsed from state - workspace_id: {workspace_id}, next_url: {next_url}")
+    try:
+        workspace_id, csrf_token, next_url = GAOAuthService.parse_state(state or "")
+        logger.info(f"Parsed from state - workspace_id: {workspace_id}, next_url: {next_url}")
+    except Exception as e:
+        logger.error(f"Error parsing state: {str(e)}, state value: {state[:100] if state else 'None'}")
+        # Return user-friendly error page instead of JSON
+        error_html = """
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Connection Error - Ask My Analytics</title>
+            <style>
+                body { font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; background: #f5f5f5; }
+                .container { background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+                .error { background: #f8d7da; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #dc3545; color: #721c24; }
+                .button { display: inline-block; padding: 12px 24px; background: #007bff; color: white; text-decoration: none; border-radius: 5px; margin: 10px 5px 10px 0; }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h1>Connection Error</h1>
+                <div class="error">
+                    <p><strong>Error:</strong> Invalid or expired connection request.</p>
+                    <p>The authorization link you used appears to be invalid or expired.</p>
+                </div>
+                <p><strong>What to do:</strong></p>
+                <ol>
+                    <li>Go back to the dashboard</li>
+                    <li>Click "Reconnect GA" or "Change Property" to start fresh</li>
+                </ol>
+                <p><a href="/dashboard" class="button">Go to Dashboard</a></p>
+            </div>
+        </body>
+        </html>
+        """
+        from fastapi.responses import HTMLResponse
+        return HTMLResponse(content=error_html, status_code=400)
     
     if not workspace_id:
+        logger.error(f"Missing workspace_id in parsed state. State was: {state[:100] if state else 'None'}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Missing workspace ID in state",
+            detail="Missing workspace ID in state parameter. Please try connecting again from the dashboard.",
         )
     
     # Convert workspace_id string to UUID if needed
@@ -121,27 +157,64 @@ async def ga_callback(
     try:
         workspace_id_uuid = uuid.UUID(workspace_id) if isinstance(workspace_id, str) else workspace_id
     except (ValueError, TypeError) as e:
-        logger.error(f"Invalid workspace_id format: {workspace_id}")
+        logger.error(f"Invalid workspace_id format: {workspace_id}, error: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid workspace ID format: {str(e)}"
+            detail=f"Invalid workspace ID format: {str(e)}. Please try connecting again from the dashboard."
         )
     
     # Verify workspace exists and get the user
     workspace = db.query(Workspace).filter(Workspace.id == workspace_id_uuid).first()
     if not workspace:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Workspace not found",
-        )
+        logger.error(f"Workspace not found: {workspace_id_uuid}")
+        # Redirect to dashboard with error message
+        from app.core.security import create_access_token
+        from app.models.user import User
+        # Try to find user by checking if workspace_id matches any user's workspace
+        all_workspaces = db.query(Workspace).all()
+        # This is a fallback - we can't identify the user without workspace
+        # Redirect to a generic error page or dashboard
+        error_html = """
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Connection Error - Ask My Analytics</title>
+            <style>
+                body { font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; background: #f5f5f5; }
+                .container { background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+                .error { background: #f8d7da; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #dc3545; color: #721c24; }
+                .button { display: inline-block; padding: 12px 24px; background: #007bff; color: white; text-decoration: none; border-radius: 5px; margin: 10px 5px 10px 0; }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h1>Connection Error</h1>
+                <div class="error">
+                    <p><strong>Error:</strong> Invalid or expired connection request.</p>
+                    <p>This may happen if you're using an old/stale authorization link.</p>
+                </div>
+                <p><strong>What to do:</strong></p>
+                <ol>
+                    <li>Go back to the dashboard</li>
+                    <li>Click "Reconnect GA" to start fresh</li>
+                    <li>Or go to ChatGPT and authorize from there</li>
+                </ol>
+                <p><a href="/dashboard" class="button">Go to Dashboard</a></p>
+            </div>
+        </body>
+        </html>
+        """
+        from fastapi.responses import HTMLResponse
+        return HTMLResponse(content=error_html, status_code=400)
     
     # Get user from workspace (we already know who they are from the JWT token used to initiate the flow)
     from app.models.user import User
     user = db.query(User).filter(User.id == workspace.user_id).first()
     if not user:
+        logger.error(f"User not found for workspace: {workspace_id_uuid}")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found",
+            detail="User not found for this workspace. Please try connecting again.",
         )
     
     # Exchange code for credentials FIRST
